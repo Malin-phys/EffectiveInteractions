@@ -1,0 +1,208 @@
+#include <iostream>
+#include <cmath>
+#include <stdlib.h>
+#include <fstream>
+
+extern int Baxtor(double* ueff, double* sk, double * p_prs, double* r, int M, int N_sig, double beta, double rho, double dr, double mix, double Pe,  bool Lable_HI);
+using namespace std;
+
+int Potential(double* r,const int M,const double sigma, double epsi, double* u,double* du, double *ddu)
+{	
+	int i;
+	
+	ofstream fout;
+	fout.open("data/potential.dat");
+	//For Lenard-Jones 
+	for(i=0;i<M;i++){
+		u[i]  = 4.0*epsi*(pow(sigma/r[i],12)-pow(sigma/r[i],6));
+		du[i] = 4.0*epsi*(-12.0*pow(sigma/r[i],13)/sigma+6.0*pow(sigma/r[i],7)/sigma);
+		ddu[i]= 4.0*epsi*(156.0*pow(sigma/r[i],14)/sigma/sigma-42.0*pow(sigma/r[i],8)/sigma/sigma);
+		fout<<r[i]<<"    "<<u[i]<<endl;
+	}
+	//For r^-12 potential
+	/*for(i=0;i<M;i++){
+		u[i]   = pow(sigma/r[i],12);
+		du[i] = -12.0*pow(sigma/r[i],13)/sigma;
+		ddu[i]=156.0*pow(sigma/r[i],14)/sigma/sigma;
+		fout<<r[i]<<"    "<<u[i]<<endl;
+	}*/
+
+	//For WCA potential
+
+	/*double core = 4;
+	double cut = pow(2.0, 1.0/6.0) * sigma;
+	i=0;
+	while(r[i] < cut){
+		u[i]  = 4.0*core*(pow(sigma/r[i],12)-pow(sigma/r[i],6)) + 4.0*(epsi-core)*(pow(sigma/cut,12)-pow(sigma/cut,6));
+		du[i] = 4.0*core*(-12.0*pow(sigma/r[i],13)/sigma+6.0*pow(sigma/r[i],7)/sigma);
+		ddu[i]= 4.0*core*(156.0*pow(sigma/r[i],14)/sigma/sigma-42.0*pow(sigma/r[i],8)/sigma/sigma);
+		fout<<r[i]<<"    "<<u[i]<<endl;
+		i++;
+	}
+	while(i<M){
+		u[i]  = 4.0*epsi*(pow(sigma/r[i],12)-pow(sigma/r[i],6));
+		du[i] = 4.0*epsi*(-12.0*pow(sigma/r[i],13)/sigma+6.0*pow(sigma/r[i],7)/sigma);
+		ddu[i]= 4.0*epsi*(156.0*pow(sigma/r[i],14)/sigma/sigma-42.0*pow(sigma/r[i],8)/sigma/sigma);
+		fout<<r[i]<<"    "<<u[i]<<endl;
+		i++;
+	}*/
+	fout.close();
+	return 0;
+}
+
+int Effective_Potential(int M, double delta_r, double beta, double* du, double* ddu, 
+	double tau_p, double v0, double Dt, double* u_eff)
+{
+	int i;
+	double Pe=v0/Dt, Da = v0*v0*tau_p/3.0;
+	double* Di = new double [M];
+	for(i=0;i<M;i++){
+		Di[i] = Dt + Da / (1.0 + tau_p * Dt * beta * ddu[i]);
+	}
+	double* dDi = new double [M];
+	for(i=1;i<M;i++) dDi[i] = (Di[i]-Di[i-1])/delta_r;
+	dDi[0] = 2.0*dDi[1]-dDi[2];
+	double* Feff = new double [M];
+	for(i=0;i<M;i++){
+		Feff[i] = (-Dt*du[i]-dDi[i]/beta) / Di[i];
+	}
+	char fn[30];
+	sprintf(fn, "data/eff_pot_%3.0f.dat", Pe);
+	ofstream fout;
+	fout.open(fn);
+	u_eff[M-1] = 0.0;
+	for(i=M-2;i>=0;i--){
+		u_eff[i]=u_eff[i+1] + delta_r * Feff[i];
+	}
+	for (i=0;i<M;i++) 
+		fout<<delta_r*i+delta_r/2<<"    "<<u_eff[i]<<endl;
+	delete [] Di;
+	delete [] dDi;
+	delete [] Feff;
+	fout.close();
+	return 0;
+}
+
+int Effective_Potential_HI(int M, int N_sig, double sigma, double delta_r, double beta, double* du, double* ddu, 
+	double* r, double tau_p, double v0, double Dt, double* u_eff)
+{
+	int i;
+	double Pe=v0/Dt, radius = sigma/2.0; //adjustable
+	double* lmn = new double [M];
+	double* Di = new double [M];
+
+	for(i=0;i<N_sig;i++){
+		lmn[i] = Dt * (1.0-3.0*r[i]/(16.0*radius));
+	}
+	for(i=N_sig;i<M;i++){
+		lmn[i] = Dt*(3.0*radius*r[i]*r[i]-2.0*pow(radius,3))/(2.0*pow(r[i],3));
+	}
+	double Da = v0*v0*tau_p/3.0;
+	double* dDi = new double [M];
+	for(i=0;i<M;i++){
+		Di[i] = Dt + Da / (1.0 + tau_p * Dt * beta * (Dt-lmn[i]) *ddu[i]);
+	}
+	for(i=1;i<M;i++) dDi[i] = (Di[i]-Di[i-1])/delta_r;
+	dDi[0] = 2.0*dDi[1]-dDi[2];
+	double* Feff = new double [M];
+	for(i=0;i<M;i++){
+		Feff[i] = -du[i]*(Dt-lmn[i])/(Di[i]-lmn[i]) - dDi[i]/(beta*(Di[i]-lmn[i]));
+	}
+	char fn[30];
+	sprintf(fn, "data/eff_pot_%3.0f_HI.dat", Pe);
+	ofstream fout;
+	fout.open(fn);
+	u_eff[M-1] = 0.0;
+	for(i=M-2;i>=0;i--){
+		u_eff[i]=u_eff[i+1] + delta_r * Feff[i];
+	}
+	for (i=0;i<M;i++) 
+		fout<<delta_r*i+delta_r/2<<"    "<<u_eff[i]<<endl;
+	delete [] lmn;
+	delete [] dDi; 
+	delete [] Di;
+	delete [] Feff;
+	fout.close();
+	return 0;
+}
+
+int evolution() {
+	const int N_total = 2000;
+	const int N_sig = 200;	/*number in a diameter*/
+	double sigma = 1.0; /*diameter*/
+	double beta = 1.0;
+	double epsi = 1.0;	/*LJ potential*/
+	double delta_r = sigma/N_sig;	/**/
+	double Dt = 1.0/beta;	/*translational diffusion*/
+	double tau = 0.01;  /*dimensionless persistent time*/
+	double tau_p = tau * sigma * sigma / Dt;  /*time dimension*/
+	double mix = 0.90;	/*mixing parameter*/ /*the Pe bigger, the mix larger*/
+	double Pe = 0.0;	/*Pelect number*/
+	double Rho = 0.1; /*number density*/
+	double v0 = Pe*Dt/sigma;
+	double *p_prs, prs1, prs2;
+	
+	double r[N_total], sk[N_total];
+	double u[N_total];
+	double du[N_total], ddu[N_total], u_eff[N_total], u_eff_HI[N_total] ;
+	int i;
+
+	for(i=0;i<N_total;i++){
+		r[i]=delta_r/2.0 + delta_r*i;
+	}
+	Potential(r, N_total, sigma, epsi, u, du, ddu);
+
+	/*Effective_Potential(N_total, delta_r, beta, du, ddu, tau_p, v0, Dt, u_eff);
+	Baxtor(u_eff, sk, p_prs r, N_total, N_sig, beta, Rho, delta_r, mix, Pe, 0);
+	Effective_Potential_HI(N_total, N_sig, sigma, delta_r, beta, du, ddu, r, tau_p, v0, Dt, u_eff_HI);
+	Baxtor(u_eff_HI, sk, p_prs r, N_total, N_sig, beta, Rho, delta_r, mix, Pe,  1); */
+
+	//Pressure
+	char fn[30];
+	sprintf(fn, "data/presure.dat");
+	ofstream fout;
+	fout.open(fn);
+
+	double range[10] = {0, 5, 10, 20, 40, 80}; //{0, 5, 10, 20, 40, 80};
+	for (i=0; i<10; i++) {
+		if (i>1 && range[i]<1.0e-9)
+			break;
+		Effective_Potential(N_total, delta_r, beta, du, ddu, tau_p, range[i], Dt, u_eff);
+		p_prs = &prs1;
+		Baxtor(u_eff, sk, p_prs, r, N_total, N_sig, beta, Rho, delta_r, mix, range[i], 0);
+		p_prs = &prs2;
+		Effective_Potential_HI(N_total, N_sig, sigma, delta_r, beta, du, ddu, r, tau_p, range[i], Dt, u_eff_HI);
+		Baxtor(u_eff_HI, sk, p_prs, r, N_total, N_sig, beta, Rho, delta_r, mix, range[i],  1);
+		fout<< range[i] <<"    "<< prs1 << "    "<< prs2 <<endl;
+		printf("%d \n", i);
+	}
+
+	/*double Pe_upper=60, Pe_lower=40;
+	do {
+		Pe = (Pe_upper + Pe_lower)/2.0;
+		v0 = Pe * Dt/sigma;
+		Effective_Potential(N_total, delta_r, beta, du, ddu, tau_p, v0, Dt, u_eff);
+		Baxtor(u_eff, sk, p_prs, r, N_total, N_sig, beta, Rho, delta_r, mix, Pe, 0);
+		if (sk[1]<0.0) {	//divergence criteria
+			Pe_upper = Pe;
+			continue;
+		}
+		Pe_lower = Pe;
+	} while (Pe_upper - Pe_lower>1.0);
+	Pe_upper=60;
+	Pe_lower=40;
+	do {
+		Pe = (Pe_upper + Pe_lower)/2.0;
+		v0 = Pe * Dt/sigma;
+		Effective_Potential_HI(N_total, N_sig, sigma, delta_r, beta, du, ddu, r, tau_p, v0, Dt, u_eff_HI);
+		Baxtor(u_eff_HI, sk, p_prs, r, N_total, N_sig, beta, Rho, delta_r, mix, Pe,  1);
+		if (sk[1]<0.0) {	//divergence criteria
+			Pe_upper = Pe;
+			continue;
+		}
+		Pe_lower = Pe;
+	} while (Pe_upper - Pe_lower>1.0);*/
+
+	fout.close();
+	return 0; 
+}
